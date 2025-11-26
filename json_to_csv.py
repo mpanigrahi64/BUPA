@@ -7,11 +7,14 @@ from openpyxl.styles import Alignment
 from google.cloud import storage
 import os
 
-PROJECT_ID = "bupa-3687"
+# --- Configuration ---
+PROJECT_ID = "bupa-pai-dev-653687"
 GCS_INPUT_JSON_PREFIX = "gs://bupa-policy-doc-ingest/output/IHHP_cleaned/" # <-- Use your cleaned JSON folder
 GCS_OUTPUT_EXCEL_PATH = "gs://bupa-policy-doc-ingest/output/IHHP/IHHP_extracts_final.xlsx"
 
 storage_client = storage.Client(project=PROJECT_ID)
+
+# --- Helper Functions (From your original script) ---
 
 def clean_text(value):
     """Simple text cleaning helper"""
@@ -30,16 +33,13 @@ def create_record(entity, prop1=None, prop2=None):
     # This structure must match the columns you want in your Excel file
     record = {
         'source_file': entity.get('source_file_hint'), # Added a field to track the source file
-        'entity_id': entity.get('id'),
         'entity_type': entity.get('type'),
-        'entity_confidence': entity.get('confidence'),
         'entity_mentionText': clean_text(entity.get('mentionText')),
         
-        'prop1_id': prop1.get('id') if prop1 else None,
+        
         'prop1_type': prop1.get('type') if prop1 else None,
-        'prop1_confidence': prop1.get('confidence') if prop1 else None,
         'prop1_mentionText': clean_text(prop1.get('mentionText')) if prop1 else None,
-
+        
     }
     # Ensure all string values are cleaned of newlines for initial processing
     for key, value in record.items():
