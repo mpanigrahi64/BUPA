@@ -12,9 +12,10 @@ from google.cloud.documentai_v1.types.document import Document
 
 project_id = "bupa-pai-dev-653687"
 location = "us" # Format is "us" or "eu"
-processor_id = "fdf315ce0df23208" # Create processor before running sample
-gcs_output_uri = "gs://bupa-policy-doc-ingest/output/bupa-service/" #Must end with a trailing slash `/`. Format: gs://bucket/directory/subdirectory/
-gcs_input_prefix = "gs://bupa-policy-doc-ingest/doc-01/pdf/58488-BIN_BHP2.0_Member_Guide_MAT_EN_DEC25.pdf"
+processor_id = "8aa74674da400782"
+ # Create processor before running sample
+gcs_output_uri = "gs://bupa-policy-doc-ingest/output/IHHP/" # Must end with a trailing slash `/`. Format: gs://bucket/directory/subdirectory/
+gcs_input_prefix = "gs://bupa-policy-doc-ingest/doc-01/pdf/IHHP/"
 
 FIELDS_TO_REMOVE = [
     'pageRefs', 'textAnchor', 'boundingPoly', 'textSegments', 'pageAnchor', 
@@ -123,36 +124,29 @@ def batch_process_documents(
     processor_id: str = processor_id,
     gcs_output_uri: str = gcs_output_uri,
     processor_version_id: Optional[str] = None,
-    gcs_input_uri: Optional[str] = None, # Using prefix for your use case
+    gcs_input_uri: Optional[str] = None,
     input_mime_type: Optional[str] = None,
-    gcs_input_prefix: Optional[str] = gcs_input_prefix, # Using prefix for your use case
-    field_mask: Optional[str] = None,  # Optional: use "text,entities" to ensure entities are returned
+    gcs_input_prefix: Optional[str] = gcs_input_prefix,
+    field_mask: Optional[str] = None,
     timeout: int = 1400,
 ) -> None:
-    """
-    Orchestrates the batch processing using the Document AI client.
-    """
+    # ... (omitted setup code for client, request, and operation call) ...
     opts = ClientOptions(api_endpoint=f"{location}-documentai.googleapis.com")
     client = documentai.DocumentProcessorServiceClient(client_options=opts)
  
-    # --- Input Configuration (Using GCS Prefix as requested) ---
     if not gcs_input_prefix:
          raise ValueError("gcs_input_prefix must be provided for directory processing.")
  
     gcs_prefix = documentai.GcsPrefix(gcs_uri_prefix=gcs_input_prefix)
     input_config = documentai.BatchDocumentsInputConfig(gcs_prefix=gcs_prefix)
  
-    # --- Output Configuration ---
     gcs_output_config = documentai.DocumentOutputConfig.GcsOutputConfig(
         gcs_uri=gcs_output_uri, field_mask=field_mask
     )
     output_config = documentai.DocumentOutputConfig(gcs_output_config=gcs_output_config)
  
-    # --- Processor Path ---
     if processor_version_id:
-        name = client.processor_version_path(
-            project_id, location, processor_id, processor_version_id
-        )
+        name = client.processor_version_path(project_id, location, processor_id, processor_version_id)
     else:
         name = client.processor_path(project_id, location, processor_id)
  
@@ -162,7 +156,6 @@ def batch_process_documents(
         document_output_config=output_config,
     )
  
-    # --- Run Operation ---
     print(f"Sending batch processing request for processor: {name}")
     operation = client.batch_process_documents(request)
  
@@ -173,43 +166,69 @@ def batch_process_documents(
         print(f"Batch Process Operation failed: {e.message}")
         return
  
-    # --- Process Results ---
     metadata = documentai.BatchProcessMetadata(operation.metadata)
  
     if metadata.state != documentai.BatchProcessMetadata.State.SUCCEEDED:
         raise ValueError(f"Batch Process Failed: {metadata.state_message}")
  
-    storage_client = storage.Client()
     print("Operation SUCCEEDED. Starting output file retrieval:")
  
+    # Extract the base output bucket name from the config
+    output_uri_matches = re.match(r"gs://(.*?)/(.*)", gcs_output_uri)
+    if not output_uri_matches:
+        raise ValueError("Invalid gcs_output_uri format.")
+    
+    # This is the destination bucket you want cleaned files in
+    destination_bucket_name = output_uri_matches.groups()[0]
+    
+    # We will put cleaned files into a subfolder named 'cleaned_output' inside your gcs_output_uri
+    cleaned_output_prefix = output_uri_matches.groups()[1].rstrip('/') + '_cleaned/'
+
+
     for process in list(metadata.individual_process_statuses):
+        # process.output_gcs_destination has the *full path* where DocAI dropped the JSON
         matches = re.match(r"gs://(.*?)/(.*)", process.output_gcs_destination)
         if not matches:
             continue
  
-        output_bucket, output_prefix = matches.groups()
-        output_blobs = storage_client.list_blobs(output_bucket, prefix=output_prefix)
+        # These are the *temporary* bucket/prefix created by DocAI for raw output
+        temp_raw_output_bucket, temp_raw_output_prefix = matches.groups()
+        
+        # List blobs in that temporary location
+        output_blobs = storage_client.list_blobs(temp_raw_output_bucket, prefix=temp_raw_output_prefix)
  
         for blob in output_blobs:
             if blob.content_type != "application/json":
                 continue
  
-            # Download JSON File and convert to Document Object
-            print(f"\n--- Processing results from file: {blob.name} ---")
-            source_blob = blob.name
-            destination_blob = source_blob.replace('.json', '_cleaned_sorted.json')
+            # --- Key Fixes Below ---
             
-            print(f"Starting processing for Json Files")
+            source_blob_name = blob.name
+            
+            # Use the input filename to determine the destination name/path
+            # We assume your input PDF file name is available or extractable from context
+            # A common approach is to just rename the JSON with a suffix in the desired bucket
+            
+            # Generate the new name structure to land in your desired final location:
+            # Example: "output/IHHP/path/to/doc.pdf-output/file.json" -> "output/IHHP_cleaned/path/to/doc_cleaned.json"
+
+            # Remove the temporary output prefix and prepend the desired cleaned prefix
+            relative_blob_name = source_blob_name.replace(temp_raw_output_prefix, "").strip('/')
+            
+            # Ensure the destination path uses your intended structure and suffix
+            destination_blob = cleaned_output_prefix + relative_blob_name.replace('.json', '_cleaned.json')
+            
+            print(f"\n--- Processing raw file: gs://{temp_raw_output_bucket}/{source_blob_name} ---")
+            print(f"--- Destination cleaned file: gs://{destination_bucket_name}/{destination_blob} ---")
+
             process_and_upload_docai_json(
-                bucket_name=output_bucket,
-                source_blob_name=source_blob,
-                destination_blob_name=destination_blob
+                bucket_name=temp_raw_output_bucket, # Download from the temporary bucket
+                source_blob_name=source_blob_name,
+                destination_blob_name=destination_blob # Upload to the destination path/bucket
             )
- 
-# [END documentai_batch_process_document_custom_extractor]
- 
- 
+
+# Add this line to run the script when executed directly
 if __name__ == "__main__":
-    print(f"Calling Doc AI")
+    # Ensure gcs_output_uri ends with a slash in the configuration above
     batch_process_documents()
  
