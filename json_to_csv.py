@@ -33,13 +33,20 @@ def create_record(entity, prop1=None, prop2=None):
     # This structure must match the columns you want in your Excel file
     record = {
         'source_file': entity.get('source_file_hint'), # Added a field to track the source file
+        'entity_id': entity.get('id'),
         'entity_type': entity.get('type'),
+        'entity_confidence': entity.get('confidence'),
         'entity_mentionText': clean_text(entity.get('mentionText')),
         
-        
+        'prop1_id': prop1.get('id') if prop1 else None,
         'prop1_type': prop1.get('type') if prop1 else None,
+        'prop1_confidence': prop1.get('confidence') if prop1 else None,
         'prop1_mentionText': clean_text(prop1.get('mentionText')) if prop1 else None,
         
+        'prop2_id': prop2.get('id') if prop2 else None,
+        'prop2_type': prop2.get('type') if prop2 else None,
+        'prop2_confidence': prop2.get('confidence') if prop2 else None,
+        'prop2_mentionText': clean_text(prop2.get('mentionText')) if prop2 else None,
     }
     # Ensure all string values are cleaned of newlines for initial processing
     for key, value in record.items():
